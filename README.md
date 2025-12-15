@@ -189,15 +189,15 @@ Tiếp theo mình sẽ tạo một Webhook  đóng vai trò là server của k�
   `?c=...`: gắn giá trị Cookie lấy được vào tham số c trên URL. Khi Webhook nhận được request, chỉ cần nhìn vào URL là thấy Cookie.
 
 
-  <img width="925" height="895" alt="image" src="https://github.com/user-attachments/assets/9f64dd76-549e-4da5-8228-2ecff0073c68" />
+  <img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/9f64dd76-549e-4da5-8228-2ecff0073c68" />
 
 
 Sau khi gửi link bài viết chứa mã độc cho Bot truy cập, Webhook của mình đã không nhận được bất kì một request nào , có thể là do thẻ `<script>` nó không hoạt động 
 
 
-<img width="811" height="580" alt="image" src="https://github.com/user-attachments/assets/51e6384e-901d-4066-9173-99e599f9b709" />
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/51e6384e-901d-4066-9173-99e599f9b709" />
 
-<img width="1025" height="813" alt="image" src="https://github.com/user-attachments/assets/a98acc73-ca5a-49ef-b1eb-3f64cfe69722" />
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/a98acc73-ca5a-49ef-b1eb-3f64cfe69722" />
 
 
 
@@ -259,7 +259,7 @@ Giải thích :
 - `onerror="..."`: Khi lỗi xảy ra, trình duyệt lập tức chạy đoạn code JS bên trong dấu ngoặc kép.
 - Đoạn JS bên trong thực hiện 2 bước: (1) Đọc trộm trang `phpinfo.php` -> (2) Bắn dữ liệu về Webhook.
 
-<img width="981" height="934" alt="image" src="https://github.com/user-attachments/assets/a4d00c77-4dc4-40ef-b2fd-35ffbf42f44b" />
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/a4d00c77-4dc4-40ef-b2fd-35ffbf42f44b" />
 
 
 Quay sang webhook , mình nhận về một mớ dữ liệu hỗn độn thử Ctrl + F từ flag thì thấy `FLAG=KCSC{PhP_InFO_d1sPl4Ys_c0okIe_iNf0rm4tiOn!!!}`
