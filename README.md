@@ -1116,6 +1116,91 @@ vậy tóm lại payload cuối cùng sẽ là
 
 
 
+# Write up: Simple web 
+
+Challenge này cho một giao diện web đăng nhập , nhiệm vụ là phải leo role admin và đọc được file flag 
+
+<img width="573" height="654" alt="image" src="https://github.com/user-attachments/assets/563fcd2e-0b2d-40cc-8bf5-fa08374dab71" />
+
+Gợi í đầu tiên trong chall này được đưa ra là `unicode normalize` , mình search thử để xem `unicode normalize` là cái gì ?
+
+Theo wikipedia, thì đây là tính năng để đưa những form ký tự gần giống na ná nhau đưa về cùng 1 ký tự chuẩn . ví dụ ①②③④ thì sẽ đưa về chuẩn là 1234
+
+Áp dụng vào bài này thì mình thử tạo 1 tài khoản đăng kí là dùng username là : `ad'min` 
+
+<img width="488" height="733" alt="image" src="https://github.com/user-attachments/assets/1225677f-a79e-41f1-b253-5caeceaa52ce" />
+
+
+Đăng kí thành công , rồi mình thử đăng nhập lại vào bằng username là : `admin` có được hay không thì kết quả là đã leo được lên role admin
+
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/6ca39409-0a2d-4b35-83c5-002070c5e737" />
+
+Tiếp tục lại có 1 gợi í hiện ra , ` Security Notice: You can only read /flag with local access` là chỉ có đọc file chứa flag với local access , mình thử với 1 câu lệnh đơn giản là `http://localhost:5021/flag` thì nó trả về `You can not access the flag directly` 
+
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/49ef5539-7eec-4b35-942d-277b9ab26a70" />
+
+Lúc này vẫn chưa có thêm manh mối gì , mình dùng burpsuite để test lại cho dễ 
+
+-  `url=http://127.0.0.1:5021/flag` ->  `Not allowed URL`
+-  `url=http://localhost:5021/app.py` -> trả về rỗng
+-  `url=http://localhost:5021/flflagag` -> trả về rỗng
+-  `url=http://localhost:5021/ⒻⓁⒶⒼ` -> trả về rỗng tức là backend nó không tự động chuẩn hóa thành từ flag
+
+Sau khi test một hồi mà không đem lại được gì thì mình thử hướng khác , sửa method POST -> GET , rồi sửa /admin -> /flag , thêm X-Forwared-For: 127.0.0.1
+
+<img width="400" height="321" alt="image" src="https://github.com/user-attachments/assets/71d16965-2fd3-4d6a-a9ed-cd082ff0562e" />
+
+nhưng kết quả là <img width="413" height="244" alt="image" src="https://github.com/user-attachments/assets/3525c7e3-ae3e-4564-aed9-30c878a7fd9f" />
+
+vậy thì khả năng cao là backend nó sử dụng biến môi trường để nhận dạng , cho nên cách này coi như bỏ , mình vào lại web thử vào source code coi có gì không , thì chẳng thấy gì đáng ngờ cả 
+
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/112408c9-4d7c-49ca-b4a9-c97c63a54e73" />
+
+
+vào lại burpsuite , mình thử nhập một đường dẫn có trong source code lúc nãy đó là `/static/css/style.css` để xem , nếu nhập 1 đường dẫn tồn tại thì nó sẽ hiện lên như thế nào 
+`http://localhost:5021/static/css/style.css` thì một lần nữa mình lại nhận về rỗng , nhưng lúc này minh nghĩ , rõ ràng là cái đường dẫn này nó có tồn tại đó mà sao nó không hiện ra như vầy 
+<img width="400" height="300" alt="image" src="https://github.com/user-attachments/assets/53e72b23-1d2d-44f6-851f-5e799573043e" />
+
+lúc này mình mới nghĩ , có thể cái cổng 5021 chỉ là cổng để giao tiếp với người dùng còn cổng thực sự không phải 5021 , bạn có thể hình dung là , khi mà bạn gửi `http://localhost:5021` lên server thì server nó sẽ nhận lệnh này , nó thấy localhost nên server sẽ tự truy cập vào chính nó , dạng dạng thế nhưng mà trong 1 server thì sẽ có cổng dùng để giao tiếp với người dùng còn 1 cổng thì có thể làm dùng nội bộ 
+
+cho nên lúc này mình đã thử lần lượt các cổng hợp lệ như là 8000 , 5000 , 8080 , 80 ,... một vài cổng quen thuộc trước và vẫn sử dụng url cũ `http://localhost:5021/static/css/style.css` , bởi vì nếu gặp cổng đúng với cổng nội bộ của nó thì nội dung trong đường dẫn này sẽ hiện ra 
+
+và kết quả là khi mình thử đến cổng 80 thì : 
+
+<img width="1000" height="600" alt="image" src="https://github.com/user-attachments/assets/2c87debf-eb7b-4a78-ac26-732c584ff9fd" />
+
+vậy tức là cổng 80 sẽ là cổng dùng để giao tiếp nội bộ , rồi mình lại thử lại `http://localhost:80/flag` nhưng nó vẫn cứ báo `You can not access the flag directly` , vậy thì khả năng bộ lọc nó đã chặn từ flag rồi , mà cũng không thể dùng các kí tự na ná flag tại vì backend nó không chuẩn hóa kí tự lại 
+
+lúc này mình lại thử dùng rút gọn link lại thành 1 link không chứa từ flag cho nên có thể bypass bộ lọc vào server , vào được server thì bản chất của cái link rút gọn kia vẫn là `http:localhost:80/flag` cho nên nó sẽ tự truy cập vào và lấy flag , lý thuyết là vậy nhưng kết quả nó trả về lại là 
+
+
+<img width="1408" height="751" alt="image" src="https://github.com/user-attachments/assets/278fd6c0-337d-4834-a86d-835130b20dde" /> không thể khai thác thêm được gì hết , vậy cách rút gọn link này cũng coi như bỏ 
+
+mình lại nghĩ lại với cái gợi í ban đầu `unicode normalize` thì thấy bây giờ thứ cần vượt qua là flag , lí do lúc đầu mình dùng `/ⒻⓁⒶⒼ` mà nó ko chuẩn hóa lại thành flag thì có thể là do cái thư viện hoặc cái backend ở sau nó ko hỗ trợ chuẩn hóa dạng kia , vậy thì mình thử nạp vào cho nó đủ loại kiểu kí tự thường gặp để xem coi nó sẽ chuẩn hóa dạng nào thì sẽ được thôi , tại vì cái bước bypass bộ lọc từ `flag` thì sẽ chắc chắn luôn qua được rồi , thêm nữa cụm từ `localhost:80` thì luôn được cho đi qua thôi
+
+có í tưởng rồi thì triển khai , add to instruder , chọn sniper attack , chọn 1 chữ cái bất kì trong từ `flag` , ở đây mình sẽ chọn chữ a , rồi bấm add , ở mục payload chọn simple list rồi thêm lần lượt Ⓐ , ⒜ , ⓐ , chưa đủ mình thử thêm !a! , @a@ , #a# . %a% , ^a^, &a& , *a* , (a) , {a} , [a] , <a> , "a" , 'a' vào danh sách thay thế rồi start attack
+
+<img width="1846" height="638" alt="image" src="https://github.com/user-attachments/assets/e4fccbde-10cc-4c8c-9786-04d95bd4b68e" />
+
+và kết quả là `{a}` đã dính 
+
+<img width="1876" height="836" alt="image" src="https://github.com/user-attachments/assets/4dca9f71-f600-4b1b-977e-56d61ec185bb" />
+
+
+`flag : KCSC{Y0u_kn0w_uRl_Globbing}`
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
