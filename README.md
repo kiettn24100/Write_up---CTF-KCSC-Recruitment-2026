@@ -1461,7 +1461,81 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 echo json_encode($result);
 ```
 file `update.php`
-muốn vào được đến đây thì bắt buộc phải là admin và sau khi vào thì nó sẽ chó 
+trước tiên nó sẽ kiểm tra xem mình có phải là admin hay không bằng hàm `isAdmin()` , sau khi qua được cửa ải check admin thì nó sẽ nhận những gì bạn nhập vào và chuyển vào hàm `update_members()` ( cái hàm mà chỉ lấy nội dung bên trong thẻ `<admin>` ấy , rồi đoạn này mình chỉ tóm gọn vậy thôi 
+
+**GIỜ VÀO VẤN ĐỀ CHÍNH NÈ**
+sau khi đọc được source code rõ ràng thế kia thì bây giờ chúng ta có nhiệm vụ , thứ nhất là lên quyền admin , và thứ 2 sau khi đã lên được admin thì cần 1 payload có cấu trúc dạng <admin>payload</admin> để lấy flag
+
+trước tiên , để lên được role admin thì chúng ta chỉ cần vượt qua được hàm `isAdmin()` với cơ chế kiểm tra lõng lẽo này thôi , easy đúng ko 
+
+hàm `isAdmin()` nó sẽ gọi `decodeToken()` để kiểm tra xem token có cấu trúc 3 phần hay không , rồi tiếp tục nó chỉ kiểm tra đoạn giữa sau khi decode ra có role = admin hay không 
+
+vậy thì trước tiên , ghi dưới dạng json {"role":"admin"} rồi bỏ vào base64 encode chúng ta được `eyJyb2xlIjoiYWRtaW4ifQ` , rồi ghép vào chuỗi token giả , khúc đầu và khúc cuối điền gì chẳng được đúng không , vì nó có kiểm tra đâu 🤣 , mình sẽ lấy token là : `abcd.eyJyb2xlIjoiYWRtaW4ifQ.abcd` 
+
+Tiếp theo bắt request , sửa đường dẫn thành /admin.php , thêm cookie: token=abcd.eyJyb2xlIjoiYWRtaW4ifQ.abcd rồi **SEND**
+
+<img width="716" height="711" alt="image" src="https://github.com/user-attachments/assets/656f8b58-ce45-41dc-af9c-d08d61dc9000" />
+
+
+và kết quả là : chúng ta đã vào được admin panel 
+
+<img width="1439" height="700" alt="image" src="https://github.com/user-attachments/assets/a2ac84fe-99e1-4128-9844-a2f588702fa7" />
+
+mình bấm thử save a changes rồi bắt được 1 request đang gửi đến `/api/members/update.php`
+
+<img width="1419" height="770" alt="image" src="https://github.com/user-attachments/assets/330bcc71-7009-46bf-8a3d-1be381d55066" />
+
+như bạn thấy ở trong hình trên cái message : "Admin  updated members.xml file" theo như những gì mình giải thích ở trên , những gì nằm trong <admin>...</admin> sẽ được lấy in ra cùng với cụm Admin ... updated members.xml file  -> thì đáng ra ở đây phải là Admin admin updated members.xml file đúng không 
+
+sau khi tìm hiểu lại thì , bản chất của từ system này nó giống như là 1 một thứ báo cho bộ máy của XML biết rằng đây là 1 link hoặc đường dẫn file , hãy truy cập và lấy nội dung , và tất nhiên khi mà mình đặt `admin` vào thì bộ máy của XML nó sẽ thử truy cập coi có file nào là admin ko , thì chắc chắn là không có rồi cho nên kết quả cuối cùng là trả về rỗng 
+
+Bây giờ mình thử test lại xem coi lỗ hổng XXE có thực sự nằm ở đây ko bằng cách thay chữ admin bằng `file:///etc/passwd`
+
+<img width="1417" height="714" alt="image" src="https://github.com/user-attachments/assets/94ba092c-39ee-47a4-82a8-0771fd774d65" />
+
+và nó có trả về kết quả thật vậy tức là có lỗ hổng XXE trong bài này thật , lúc này mình nghĩ thế là xong bài 😅 nhưng không như mơ , mình đã dùng `file:///flag.txt` vì mình thấy file flag.txt trong source code tải về . Và đây là kết quả 
+
+<img width="1415" height="716" alt="image" src="https://github.com/user-attachments/assets/2be0eb4d-1d35-44db-9781-c68ab217da1f" />
+
+Vãi nho thật , nó trả về rỗng ạ , lúc này bí lắm bởi vì ngoài flag.txt thì mình ko biết nên tìm gì thêm -> mình hỏi author **nartgnourt** , thì được hint là `em tìm hiểu xem khi chạy lệnh đổi tên file flag đó thì nó có được lưu lại ở đâu không` -> vậy í là admin đã sử dụng 1 câu lệnh để đổi tên file flag đó , nhưng lúc đầu mình lại hiểu theo í là tìm những file được đổi tên coi nó thường được lưu ở đâu , sau khi ngẫm lại một hồi thì í chính của author là tìm coi cái lệnh thực hiện đổi file flag sau khi được thực thi thì được lưu lại ở file nào? ( chắc là thế ) 
+
+mình search gg thử coi `Hệ thống tập tin trên Linux` thì mò được link này , các bạn tham khảo `https://viblo.asia/p/he-thong-tap-tin-tren-linux-AZoJjny7JY7`
+
+<img width="1080" height="552" alt="image" src="https://github.com/user-attachments/assets/a514ef83-d049-4fe7-bf69-388194a449a1" />
+
+và khi đọc đến mục **proc** : theo định nghĩa của trang thì : ***Chứa các tập tin ảo cung cấp thông tin về các tiến trình đang chạy, thông tin hệ thống như phiên bản kernel, thời gian hoạt động.***
+
+rồi mình thử search tiếp `/proc` trong linux ( `https://wiki.nhanhoa.com/kb/tim-hieu-ve-proc-trong-linux/` các bạn tham khảo ) thì mình hiểu là `/proc`  nó là nơi hiển thị mọi trạng thái của hệ thống lúc đang chạy chương trình , từ dung lượng ram , cho đến các câu lệnh đang thực thi trong lúc chương trình đang chạy
+
+và ở đây mình đọc được  `/proc/<PID>/cmdline: Các đối số commandline đã sử dụng để khởi chạy tiến trình` , PID tức là process ID ( ID tiến trình ) , và cái tiến trình khởi chạy đầu tiên của chương trình luôn mang PID là 1 -> câu lệnh mình truyền vào lúc này sẽ là `/proc/1/cmdline` 
+
+<img width="1408" height="582" alt="image" src="https://github.com/user-attachments/assets/26531073-48f1-4891-8f6a-38dd0fadf60c" />
+
+Nhưng nó lại báo `Invalid XML format: Char 0x0 out of allowed range` tức là đã có lỗi xung đột gì trong định dạng XML , và có nghĩa là ta đã lấy được cái nội dung bên trong  `/proc/1/cmdline` nhưng vấn đề chỉ là xung đột format 
+
+để mình giải thích thêm đoạn này : 
+- nếu bạn dùng `file:///login.php` chẳng hạn , thì lúc này bộ máy XML nó vẫn sẽ lấy nội dung trong login.php ra cho bạn nhưng mà sau khi lấy mà paste nội dung vào trong thẻ admin thì nó lại vô tình thực thi cả những thẻ ở trong tại vì có cả thẻ `<?php` j dồ nữa nên tất nhiên nó sẽ gây ra lỗi
+
+- vậy nên để bypass đoạn này thì phải dùng `php://filter/convert.base64-encode/resource=....` thì chức năng của nó cũng tương tự như cái `file:///` kia nhưng mà trước khi nó được đưa vào <admin>..</admin> thì nó sẽ được chuyển sang dạng bass64 mục đích là để bộ máy xml nó nghĩ là một chuỗi vô hại và cho qua
+
+- vẫn chưa hết , nếu mà bạn sử dụng cú pháp kia thì bạn phải ghi rõ đường dẫn hệ thống . 2 cái đường dẫn web và đường dẫn hệ thống hoàn toàn khác nhau , trong burpsuite ở dòng đầu ,bạn chỉ cần ghi /admin.php là nó sẽ dẫn bạn đến trang admin
+
+- nhưng thực tế trong cái hệ thống nó lại là 1 đường dẫn hoàn toàn khác , trong file compose.yaml bạn sẽ nhìn thấy rõ đường dẫn hệ thoosgn `/src:/var/www/html`
+vậy nên trước những đường dẫn kia bạn phải điền vào thêm `/src:/var/www/html/...` rồi mới thêm cái trang bạn muốn đến
+
+Tóm lại payload cuối cùng sẽ là : `php://filter/convert.base64-encode/resource=/proc/1/cmdline` -> mình nhận về được 1 chuỗi base64 rồi đem đi decode 
+
+<img width="1409" height="716" alt="image" src="https://github.com/user-attachments/assets/25170744-a8d6-4cff-8581-644b0c88bfd5" />
+
+-> sh�-c�mv /flag.txt /flag_REDACTED.txt && php-fpm && tail -f /dev/null�
+
+nhận thấy có đoạn `mv /flag.txt /flag_REDACTED.txt` vậy tức là file flag.txt đã bị đổi tên thiệt thành flag_REDACTED.txt
+
+Và thế là xong , `file:///flag_REDACTED.txt`
+
+<img width="1412" height="706" alt="image" src="https://github.com/user-attachments/assets/2b3e1a8a-1463-45c5-9076-9b13d0e691a9" />
+
+do bài này , mình chạy dockerfile nên flag nó thế : `flag : KCSC{REDACTED}` 
 
 
 
