@@ -1189,7 +1189,279 @@ và kết quả là `{a}` đã dính
 
 `flag : KCSC{Y0u_kn0w_uRl_Globbing}`
 
+# Write up: Ka Cê ét Cê
 
+vào challenge nó thì cho một giao diện như thế này và cho soure code
+
+<img width="1920" height="1018" alt="image" src="https://github.com/user-attachments/assets/3795dc7b-66e8-445c-8888-fa9980a1a18a" />
+
+```python
+<?php
+
+class JWT
+{
+    private static $secret = "REDACTED";
+
+    private static function base64UrlEncode($data)
+    {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+    }
+
+    private static function base64UrlDecode($data)
+    {
+        return base64_decode(strtr($data, '-_', '+/'));
+    }
+
+    public static function generateToken($payload, $expiresIn = 3600)
+    {
+        $header = [
+            'typ' => 'JWT',
+            'alg' => 'HS256'
+        ];
+
+        $payload['iat'] = time();
+        $payload['exp'] = time() + $expiresIn;
+
+        $headerEncoded = self::base64UrlEncode(json_encode($header));
+        $payloadEncoded = self::base64UrlEncode(json_encode($payload));
+
+        $signature = hash_hmac('sha256', "$headerEncoded.$payloadEncoded", self::$secret, true);
+        $signatureEncoded = self::base64UrlEncode($signature);
+
+        return "$headerEncoded.$payloadEncoded.$signatureEncoded";
+    }
+
+    public static function validateToken($token)
+    {
+        $parts = explode('.', $token);
+        if (count($parts) !== 3) {
+            return false;
+        }
+
+        list($headerEncoded, $payloadEncoded, $signatureEncoded) = $parts;
+
+        $signature = self::base64UrlDecode($signatureEncoded);
+        $expectedSignature = hash_hmac('sha256', "$headerEncoded.$payloadEncoded", self::$secret, true);
+
+        if (!hash_equals($signature, $expectedSignature)) {
+            return false;
+        }
+
+        $payload = json_decode(self::base64UrlDecode($payloadEncoded), true);
+
+        if (isset($payload['exp']) && $payload['exp'] < time()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    public static function decodeToken($token)
+    {
+        $parts = explode('.', $token);
+        if (count($parts) !== 3) {
+            return null;
+        }
+
+        $payload = json_decode(self::base64UrlDecode($parts[1]), true);
+        return $payload;
+    }
+
+    public static function refreshToken($token, $expiresIn = 3600)
+    {
+        if (!self::validateToken($token)) {
+            throw new Exception('Invalid token');
+        }
+
+        $payload = self::decodeToken($token);
+        unset($payload['iat']);
+        unset($payload['exp']);
+
+        return self::generateToken($payload, $expiresIn);
+    }
+}
+```
+file `jwt.php` 
+
+đầu tiên là hàm generate() , đây là 1 hàm tạo token , chia làm 3 phần 
+
+phần đầu header sẽ luôn luôn có thuộc tính là typ và alg , rồi chuyển thành dạng base64
+
+phần 2 sẽ lấy từ tham số `$payload` , thời gian hiện tại , và thời gian hết hạn = thời gian hiện tại + 3600 , gộp lại thành 1 và chuyển thành chuỗi dạng base64 
+
+phần 3 là phần tạo chữ kí , sử dụng thuật toán băm sha256 + phần header , payload đã encode + cái biến secret được khởi tạo ở đầu , tạo thành 1 chuỗi ngẫu nhiên rồi lại chuyển chuỗi đó thành dạng base64
+
+cuối cùng trả về chuỗi `"$headerEncoded.$payloadEncoded.$signatureEncoded";`
+
+Hàm decodeToken nhận tham số là `$token` , nó kiểm tra xem token này có 3 phần hay không , rồi nó decode đoạn thứ 2 của token ra gán vào biên `$payload` và hàm này trả về biến `$payload`
+
+
+```python
+<?php
+require_once __DIR__ . '/JWT.php';
+
+class KCSC
+{
+    public $members;
+
+    public function __construct($members = __DIR__ . '/../members.xml')
+    {
+        $this->members = $members;
+    }
+
+    public function slogan()
+    {
+        return 'Make KMA Greater';
+    }
+
+    public function info()
+    {
+        return "https://www.facebook.com/kmasec.club";
+    }
+
+    public function isAdmin($token)
+    {
+        if (!JWT::decodeToken($token)) {
+            return false;
+        } else {
+            $payload = JWT::decodeToken($token);
+            if ($payload['role'] !== 'admin') {
+                return false;
+            }
+            return true;
+        }
+    }
+
+    public function update_members($xml_content)
+    {
+        libxml_use_internal_errors(true);
+
+        $dom = new DOMDocument();
+        $loaded = $dom->loadXML($xml_content, LIBXML_DTDLOAD | LIBXML_NOENT);
+
+        if (!$loaded) {
+            $errors = libxml_get_errors();
+            libxml_clear_errors();
+            return ['success' => false, 'message' => 'Invalid XML format: ' . $errors[0]->message];
+        }
+
+        $adminNodes = $dom->getElementsByTagName('admin');
+
+        $admin = $adminNodes->item(0)->nodeValue;
+
+        if (file_put_contents($this->members, $xml_content)) {
+            return ['success' => true, 'message' => 'Admin ' . $admin . ' updated members.xml file'];
+        } else {
+            return ['success' => false, 'message' => 'Failed to write file'];
+        }
+    }
+}
+```
+file `kcsc.php`
+
+Hàm `isAdmin()` nhận tham số là token , nó gọi hàm decodeToken để kiểm tra cái tham số token truyền vào , và nếu true thì nó sẽ lại kiểm tra tiếp trong cái token đó , phần 2 nó có `role = admin` 
+
+Ở đây chúng ta thấy hàm isAdmin() kiểm tra khá là lỏng lẻo, thứ nhất nó gọi hàm decodeToken kiểm tra nhưng hàm này nó cũng chỉ kiểm tra xem token có 3 phần hay không và phần sau nó chỉ kiểm tra mỗi cái phần thân token có chứa `role = admin` hay không thôi
+giả sử mình có 1 token abcd.(đoạn này base64 role : admin).abcd thì isAdmin() nó vẫn cứ trả về true
+
+Hàm `update_members()` nhận tham số là `$xml_content` 
+`$loaded = $dom->loadXML($xml_content, LIBXML_DTDLOAD | LIBXML_NOENT);` : ở đây loadXML đã nhận xml_content vào để đọc và phân tích nội dung , sử dụng 2 option là LIBXML_DTDLOAD và LIBXML_NOENT
+đại khái 2 option đấy là cho phép nạp các tệp tự định nghĩa bên ngoài và cho phép thay thế các entities trong xml
+
+Tiếp tục biến `$adminNodes` : nhiệm vụ của nó là tìm kiếm và lấy ra những những cái thẻ có dạng <admin>
+. ví dụ `<admin>abc</admin>` thì biến `$adminNodes` sẽ lấy nguyên cái cụm đó luôn 
+
+Ở dưới có khai báo thêm biến `$admin` , nó sẽ lấy giá trị nằm ở bên `$adminNodes` tức là sẽ lấy chữ `abc` ra ngoài và gán vào nó 
+
+`file_put_contents()` là hàm mà nhận data và đường dẫn của file mà data cần truyền vào để thay đổi data cũ trong file đấy , ở đây chúng ta có biến `$xml_content`  và cái `$member` được khai báo ở đầu là đường dẫn vào file `member.xml`  , nếu mà truyền thành công thì nó sẽ trả về kết quả có biến `admin` , tức là cái biến nằm trong thẻ `<admin>` ra ngoài 
+
+vậy thì ở đây nếu chúng ta có thể truyền được 1 file dạng <admin>payload đọc flag</admin> vào thì hoàn toàn có thể tìm ra flag . và điều đó là hoàn toàn có thể tại vì nội dung ở trong thẻ admin có được lọc hay gì đâu 
+
+```python
+<?php
+require_once __DIR__ . '/../utils/JWT.php';
+
+$result = new stdClass;
+
+header('Content-Type: application/json; charset=utf-8');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(400);
+    $result->message = "Only POST!";
+} else {
+    try {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $username = $data['username'] ?? NULL;
+        $password = $data['password'] ?? NULL;
+
+        if ($username === NULL || $password === NULL) {
+            $result->message = 'Please provide your username and password!';
+        } else if ($username === 'admin' && $password === getenv('ADMIN_PASSWORD')) {
+            $result->message = 'Oh, Welcome admin!';
+            $result->token = JWT::generateToken(['username' => 'admin', 'role' => 'admin']);
+        } else {
+            $result->message = 'Hello, CTFer!';
+            $result->token = JWT::generateToken(['username' => $username, 'role' => 'ctfer']);
+        }
+    } catch (\Throwable $th) {
+    }
+}
+
+echo json_encode($result);
+```
+kiểm tra xem username có là admin hay không và password nhập vào có giống với ADMIN_PASSWORD được lưu trong biến môi trường hay không 
+nếu đúng thì sẽ lấy username :admin và role:admin truyền vào trong `gernerateToken()` để tạo ra được token vs **role** là **admin**
+vì đã biết trong cái đoạn thân nó bao gồm những gì , bao gồm username , role , thời gian , cho nên chúng ta có thể tự tao được 1 token giả  mà không quan trọng chữ kí là gì
+
+```python
+<?php
+require_once __DIR__ . '/../../utils/JWT.php';
+require_once __DIR__ . '/../../utils/KCSC.php';
+
+$result = new stdClass;
+$kcsc = new KCSC;
+
+header('Content-Type: application/json; charset=utf-8');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(400);
+    $result->message = 'Only POST request!';
+} else {
+    $token = $_COOKIE['token'] ?? null;
+    if (is_null($token)) {
+        http_response_code(401);
+        $result->message = 'Please provide cookie token!';
+    } else if (!$kcsc->isAdmin($token)) {
+        http_response_code(403);
+        $result->message = 'You are not admin!';
+    } else {
+        $input = file_get_contents('php://input');
+        $data = json_decode($input, true);
+
+        if (!isset($data['xml_content'])) {
+            http_response_code(400);
+            $result->message = 'Missing xml_content parameter!';
+        } else {
+            $xml_content = $data['xml_content'];
+            $updateResult = $kcsc->update_members($xml_content);
+
+            if ($updateResult['success']) {
+                $result->message = $updateResult['message'];
+            } else {
+                http_response_code(400);
+                $result->message = $updateResult['message'];
+                if (isset($updateResult['errors'])) {
+                    $result->errors = $updateResult['errors'];
+                }
+            }
+        }
+    }
+}
+
+echo json_encode($result);
+```
+file `update.php`
+muốn vào được đến đây thì bắt buộc phải là admin và sau khi vào thì nó sẽ chó 
 
 
 
